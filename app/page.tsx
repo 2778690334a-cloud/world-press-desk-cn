@@ -22,6 +22,7 @@ type Source = {
   liveTitle?: string;
   liveUrl?: string;
   seenAt?: string;
+  dailyArticles?: LiveArticle[];
 };
 
 type LiveArticle = {
@@ -30,6 +31,8 @@ type LiveArticle = {
   domain: string;
   seenAt?: string;
   language?: string;
+  sourceCountry?: string;
+  summary?: string;
 };
 
 const SOURCES: Source[] = [
@@ -236,6 +239,16 @@ function archiveUrl(source: Source, date: string) {
 
 function shortTime(value?: string) {
   if (!value) return "待同步";
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) {
+    return date.toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
   const parsed = value.match(
     /(\d{4})(\d{2})(\d{2})T?(\d{2})(\d{2})(\d{2})?Z?/,
   );
@@ -255,6 +268,11 @@ export default function Home() {
   const [syncState, setSyncState] = useState<
     "idle" | "loading" | "live" | "fallback"
   >("idle");
+  const [searchState, setSearchState] = useState<
+    "idle" | "loading" | "live" | "empty" | "error"
+  >("idle");
+  const [searchResults, setSearchResults] = useState<LiveArticle[]>([]);
+  const [searchedAs, setSearchedAs] = useState("");
   const [generatedAt, setGeneratedAt] = useState<string>("");
 
   useEffect(() => {
@@ -277,19 +295,19 @@ export default function Home() {
       const articles = payload.articles ?? [];
       setSources((current) =>
         current.map((source) => {
-          const article = articles.find(
+          const matchingArticles = articles.filter(
             (item) =>
               item.domain === source.domain ||
               item.domain.endsWith(`.${source.domain}`),
           );
-          return article
-            ? {
-                ...source,
-                liveTitle: article.title,
-                liveUrl: article.url,
-                seenAt: article.seenAt,
-              }
-            : source;
+          const lead = matchingArticles[0];
+          return {
+            ...source,
+            liveTitle: lead?.title,
+            liveUrl: lead?.url,
+            seenAt: lead?.seenAt,
+            dailyArticles: matchingArticles,
+          };
         }),
       );
       setGeneratedAt(payload.generatedAt ?? new Date().toISOString());
@@ -304,27 +322,68 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date]);
 
+  useEffect(() => {
+    const topic = query.trim();
+    if (!topic) {
+      setSearchState("idle");
+      setSearchResults([]);
+      setSearchedAs("");
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setSearchState("loading");
+      try {
+        const response = await fetch(
+          `/api/search?q=${encodeURIComponent(topic)}&date=${encodeURIComponent(date)}`,
+          { signal: controller.signal },
+        );
+        if (!response.ok) throw new Error("search failed");
+        const payload = (await response.json()) as {
+          articles?: LiveArticle[];
+          searchedAs?: string;
+        };
+        const articles = payload.articles ?? [];
+        setSearchResults(articles);
+        setSearchedAs(payload.searchedAs ?? topic);
+        setSearchState(articles.length ? "live" : "empty");
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setSearchResults([]);
+        setSearchState("error");
+      }
+    }, 700);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [date, query]);
+
   const filtered = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
     return sources.filter((source) => {
       const regionMatch = region === "全部" || source.region === region;
-      const queryMatch =
-        !needle ||
-        [
-          source.masthead,
-          source.localName,
-          source.country,
-          source.focus,
-          source.liveTitle,
-          source.seedTitle,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLocaleLowerCase()
-          .includes(needle);
-      return regionMatch && queryMatch;
+      return regionMatch;
     });
-  }, [query, region, sources]);
+  }, [region, sources]);
+
+  const visibleSearchResults = useMemo(() => {
+    if (region === "全部") return searchResults;
+    return searchResults.filter((article) => {
+      const source = sources.find(
+        (item) =>
+          article.domain === item.domain ||
+          article.domain.endsWith(`.${item.domain}`),
+      );
+      return source?.region === region;
+    });
+  }, [region, searchResults, sources]);
+
+  const searchedMediaCount = useMemo(
+    () => new Set(visibleSearchResults.map((article) => article.domain)).size,
+    [visibleSearchResults],
+  );
 
   const selected = sources.find((item) => item.id === selectedId);
 
@@ -451,18 +510,119 @@ export default function Home() {
           <input
             type="search"
             value={query}
-            onChange={(event) => {
-              const nextQuery = event.target.value;
-              setQuery(nextQuery);
-              if (nextQuery.trim()) setView("desk");
-            }}
-            placeholder="搜索媒体、国家或议题（即时筛选）"
-            aria-label="搜索媒体、国家或议题"
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="输入议题，如：中东、人工智能、能源"
+            aria-label="跨媒体搜索新闻议题"
           />
         </label>
       </section>
 
-      {view === "desk" && (
+      {query.trim() && (
+        <section className="topic-search-view" aria-live="polite">
+          <div className="section-heading search-heading">
+            <div>
+              <p>TOPIC SEARCH · ACROSS THE PRESS</p>
+              <h2>“{query.trim()}”的全球媒体报道</h2>
+            </div>
+            <span>
+              {searchState === "loading"
+                ? "正在检索 12 家核心媒体…"
+                : searchState === "live"
+                  ? `${visibleSearchResults.length} 篇报道 · ${searchedMediaCount} 家媒体`
+                  : "输入停止约 0.7 秒后自动搜索"}
+            </span>
+          </div>
+
+          {searchedAs &&
+            searchedAs.toLocaleLowerCase() !== query.trim().toLocaleLowerCase() &&
+            searchState !== "loading" && (
+              <div className="query-expansion">
+                <span>中文议题已扩展</span>
+                同时按国际媒体常用词 “{searchedAs}” 检索
+              </div>
+            )}
+
+          {searchState === "loading" && (
+            <div className="search-loading">
+              <div className="search-scan" />
+              <strong>正在全球公开新闻索引中匹配相关报道</strong>
+              <p>范围限定为当前日期和本项目收录的权威媒体。</p>
+            </div>
+          )}
+
+          {searchState === "live" && (
+            <div className="search-results">
+              {visibleSearchResults.map((article, index) => {
+                const source = sources.find(
+                  (item) =>
+                    article.domain === item.domain ||
+                    article.domain.endsWith(`.${item.domain}`),
+                );
+                return (
+                  <article className="search-result" key={article.url}>
+                    <span className="result-number">
+                      {String(index + 1).padStart(2, "0")}
+                    </span>
+                    <div className="result-source">
+                      <b>{source?.flag ?? "INT"}</b>
+                      <strong>{source?.masthead ?? article.domain}</strong>
+                      <small>
+                        {source?.country ?? article.sourceCountry ?? "国际"}
+                      </small>
+                    </div>
+                    <div className="result-story">
+                      <p>
+                        {source?.focus ?? article.language ?? "国际新闻"}
+                      </p>
+                      <h3>{article.title}</h3>
+                      {article.summary && (
+                        <p className="result-summary">{article.summary}</p>
+                      )}
+                      <span>
+                        收录时间 {shortTime(article.seenAt)} ·{" "}
+                        {article.language ?? source?.language ?? "原文"}
+                      </span>
+                    </div>
+                    <div className="result-actions">
+                      <a href={article.url} target="_blank" rel="noreferrer">
+                        阅读原文 ↗
+                      </a>
+                      {source && (
+                        <button onClick={() => setSelectedId(source.id)}>
+                          媒体详情
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+
+          {searchState === "live" && !visibleSearchResults.length && (
+            <div className="search-empty">
+              <strong>这个地区暂时没有匹配报道</strong>
+              <p>切换到“全部”地区，可查看其他国家媒体的相关内容。</p>
+            </div>
+          )}
+
+          {(searchState === "empty" || searchState === "error") && (
+            <div className="search-empty">
+              <strong>
+                {searchState === "error"
+                  ? "本次公共索引连接失败"
+                  : "当天暂未找到匹配报道"}
+              </strong>
+              <p>
+                可以换一个更宽的词，例如“能源”“气候”“贸易”，或选择相邻日期。
+              </p>
+              <button onClick={() => setQuery("")}>返回全球版面</button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {!query.trim() && view === "desk" && (
         <section className="desk-view">
           <div className="section-heading">
             <div>
@@ -522,12 +682,22 @@ export default function Home() {
                     <span>{shortTime(source.seenAt)}</span>
                   </div>
                   <p className="paper-kicker">{source.focus}</p>
-                  <h4>{source.liveTitle ?? source.seedTitle}</h4>
-                  <p className="paper-deck">
-                    {source.liveTitle
-                      ? "实时标题来自公开新闻索引；打开版面可查看原文、存档与采集状态。"
-                      : source.seedDeck}
-                  </p>
+                  <h4>{source.liveTitle ?? "今日真实标题暂未同步"}</h4>
+                  {source.dailyArticles &&
+                  source.dailyArticles.length > 1 ? (
+                    <ol className="paper-headline-list">
+                      {source.dailyArticles.slice(1, 3).map((article) => (
+                        <li key={article.url}>{article.title}</li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p className="paper-deck">
+                      {source.liveTitle
+                        ? (source.dailyArticles?.[0]?.summary ??
+                          "标题来自当天公开新闻索引；点击查看今日完整列表。")
+                        : "公开索引暂未返回当日标题，点击仍可进入媒体主页和历史存档。"}
+                    </p>
+                  )}
                   <div className="paper-columns" aria-hidden="true">
                     <span />
                     <span />
@@ -537,7 +707,11 @@ export default function Home() {
                     <span />
                   </div>
                   <footer>
-                    <span>{source.liveTitle ? "LIVE INDEX" : "SOURCE PROFILE"}</span>
+                    <span>
+                      {source.dailyArticles?.length
+                        ? `TODAY · ${source.dailyArticles.length} STORIES`
+                        : "AWAITING LIVE INDEX"}
+                    </span>
                     <span>0{index + 1}</span>
                   </footer>
                 </article>
@@ -553,7 +727,7 @@ export default function Home() {
         </section>
       )}
 
-      {view === "compare" && (
+      {!query.trim() && view === "compare" && (
         <section className="compare-view">
           <div className="section-heading">
             <div>
@@ -624,7 +798,7 @@ export default function Home() {
               <button key={source.id} onClick={() => setSelectedId(source.id)}>
                 <span>{source.flag}</span>
                 <strong>{source.masthead}</strong>
-                <em>{source.liveTitle ?? source.focus}</em>
+                <em>{source.liveTitle ?? "今日真实标题暂未同步"}</em>
                 <b>查看 →</b>
               </button>
             ))}
@@ -637,7 +811,7 @@ export default function Home() {
         </section>
       )}
 
-      {view === "ledger" && (
+      {!query.trim() && view === "ledger" && (
         <section className="ledger-view">
           <div className="section-heading">
             <div>
@@ -762,12 +936,43 @@ export default function Home() {
               <p>{selected.localName}</p>
             </div>
             <p className="drawer-focus">{selected.focus}</p>
-            <h3>{selected.liveTitle ?? selected.seedTitle}</h3>
+            <h3>
+              {selected.dailyArticles?.length
+                ? `${date} · 今日收录 ${selected.dailyArticles.length} 条`
+                : `${date} · 今日版面暂未同步`}
+            </h3>
             <p className="drawer-summary">
-              {selected.liveTitle
-                ? "这是从公开新闻索引同步到的最新标题。系统保留标题与链接，不复制未获授权的全文。"
-                : selected.seedDeck}
+              以下均为该媒体当天公开发布的真实标题。点击任一条即可阅读原文；
+              系统不会用生成内容替代新闻，也不会绕过媒体的付费或版权限制。
             </p>
+            {selected.dailyArticles?.length ? (
+              <div className="drawer-article-list">
+                {selected.dailyArticles.map((article, index) => (
+                  <article key={article.url}>
+                    <span>{String(index + 1).padStart(2, "0")}</span>
+                    <div>
+                      <small>
+                        {shortTime(article.seenAt)} ·{" "}
+                        {article.language ?? selected.language}
+                      </small>
+                      <h4>{article.title}</h4>
+                      {article.summary && <p>{article.summary}</p>}
+                      <a href={article.url} target="_blank" rel="noreferrer">
+                        阅读原文与内容 ↗
+                      </a>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="drawer-no-news">
+                <strong>没有可核验的当日标题</strong>
+                <p>
+                  这通常表示公开索引尚未收录、媒体域名受限，或所选日期没有结果。
+                  你仍可打开媒体主页核验当日版面。
+                </p>
+              </div>
+            )}
             <div className="drawer-facts">
               <div>
                 <span>网页访问</span>
@@ -785,11 +990,11 @@ export default function Home() {
             <div className="drawer-actions">
               <a
                 className="primary"
-                href={selected.liveUrl ?? selected.homepage}
+                href={selected.homepage}
                 target="_blank"
                 rel="noreferrer"
               >
-                打开原文 ↗
+                打开媒体主页 ↗
               </a>
               <a
                 href={archiveUrl(selected, date)}

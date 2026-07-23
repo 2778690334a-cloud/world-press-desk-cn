@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { fetchRssArticles, type IndexedArticle } from "../../lib/rss";
 
 const ALLOWED_DOMAINS = new Set([
   "news.cn",
@@ -54,29 +55,28 @@ async function fetchLatestForDomain(
           Accept: "application/json",
           "User-Agent": "WorldPressDesk/1.0 (news metadata index)",
         },
+        signal: AbortSignal.timeout(12000),
       },
     );
-    if (!response.ok) return null;
+    if (!response.ok) return [];
 
     const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.includes("json")) return null;
+    if (!contentType.includes("json")) return [];
 
     const payload = (await response.json()) as { articles?: GdeltArticle[] };
-    const match = (payload.articles ?? []).find(
-      (article) => article.title && article.url,
-    );
-    if (!match?.title || !match.url) return null;
-
-    return {
-      title: match.title.trim(),
-      url: match.url,
-      domain,
-      seenAt: match.seendate,
-      language: match.language,
-      sourceCountry: match.sourcecountry,
-    };
+    return (payload.articles ?? [])
+      .filter((article) => article.title && article.url)
+      .slice(0, 8)
+      .map((article) => ({
+        title: article.title!.trim(),
+        url: article.url!,
+        domain,
+        seenAt: article.seendate,
+        language: article.language,
+        sourceCountry: article.sourcecountry,
+      }));
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -90,24 +90,42 @@ export async function GET(request: NextRequest) {
   end.setUTCDate(end.getUTCDate() + 1);
 
   try {
-    const domains = [...ALLOWED_DOMAINS];
-    const articles = [];
+    const requestedDay = validDate.toISOString().slice(0, 10);
+    const rssArticles = await fetchRssArticles();
+    const articles: IndexedArticle[] = rssArticles.filter(
+      (article) => !article.seenAt || article.seenAt.slice(0, 10) === requestedDay,
+    );
+    const rssDomains = new Set(articles.map((article) => article.domain));
+    const domains = [...ALLOWED_DOMAINS].filter(
+      (domain) => !rssDomains.has(domain),
+    );
 
-    // Keep concurrency deliberately low so the public index is treated politely.
+    // RSS is primary. GDELT fills only the media without a matching RSS item.
     for (let index = 0; index < domains.length; index += 3) {
       const batch = domains.slice(index, index + 3);
       const results = await Promise.all(
         batch.map((domain) => fetchLatestForDomain(domain, validDate, end)),
       );
-      articles.push(...results.filter((article) => article !== null));
+      articles.push(...results.flat());
     }
+
+    const seen = new Set<string>();
+    const deduplicated = articles
+      .filter((article) => {
+        if (seen.has(article.url)) return false;
+        seen.add(article.url);
+        return true;
+      })
+      .sort((left, right) =>
+        (right.seenAt ?? "").localeCompare(left.seenAt ?? ""),
+      );
 
     return NextResponse.json(
       {
-        status: articles.length ? "live" : "empty",
+        status: deduplicated.length ? "live" : "empty",
         generatedAt: new Date().toISOString(),
-        requestedDate: validDate.toISOString().slice(0, 10),
-        articles,
+        requestedDate: requestedDay,
+        articles: deduplicated,
       },
       {
         headers: {
