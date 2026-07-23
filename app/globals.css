@@ -763,6 +763,15 @@ input:focus-visible,
   font-size: 10px;
 }
 
+.inline-empty {
+  padding: 30px 12px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
 .rights-note {
   display: grid;
   grid-template-columns: 150px 1fr;

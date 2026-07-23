@@ -451,8 +451,13 @@ export default function Home() {
           <input
             type="search"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索媒体、国家或议题"
+            onChange={(event) => {
+              const nextQuery = event.target.value;
+              setQuery(nextQuery);
+              if (nextQuery.trim()) setView("desk");
+            }}
+            placeholder="搜索媒体、国家或议题（即时筛选）"
+            aria-label="搜索媒体、国家或议题"
           />
         </label>
       </section>
@@ -555,7 +560,11 @@ export default function Home() {
               <p>ONE STORY · MANY FRAMES</p>
               <h2>同一世界，不同头版</h2>
             </div>
-            <span>按议题框架对照，而不是简单罗列观点</span>
+            <span>
+              {query
+                ? `当前搜索：${query} · ${filtered.length} 个相关信源`
+                : "按议题框架对照，而不是简单罗列观点"}
+            </span>
           </div>
           <div className="compare-hero">
             <div>
@@ -611,7 +620,7 @@ export default function Home() {
           </div>
           <div className="compare-list">
             <h3>打开一组真实版面</h3>
-            {sources.slice(0, 6).map((source) => (
+            {filtered.slice(0, 6).map((source) => (
               <button key={source.id} onClick={() => setSelectedId(source.id)}>
                 <span>{source.flag}</span>
                 <strong>{source.masthead}</strong>
@@ -619,6 +628,11 @@ export default function Home() {
                 <b>查看 →</b>
               </button>
             ))}
+            {!filtered.length && (
+              <div className="inline-empty">
+                没有匹配的媒体，请尝试“中东”“日本”“经济”或媒体名称。
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -630,7 +644,11 @@ export default function Home() {
               <p>SOURCE TRANSPARENCY</p>
               <h2>来源与版权台账</h2>
             </div>
-            <span>公开记录每个信源的可用性与边界</span>
+            <span>
+              {query || region !== "全部"
+                ? `已筛选 ${filtered.length} 个信源`
+                : "公开记录每个信源的可用性与边界"}
+            </span>
           </div>
           <div className="rights-note">
             <strong>采集原则</strong>
@@ -649,7 +667,7 @@ export default function Home() {
               <span>采集方式</span>
               <span />
             </div>
-            {sources.map((source) => (
+            {filtered.map((source) => (
               <div className="ledger-row" key={source.id}>
                 <span>
                   <b>{source.flag}</b>
@@ -675,6 +693,11 @@ export default function Home() {
                 </span>
               </div>
             ))}
+            {!filtered.length && (
+              <div className="inline-empty">
+                没有匹配的信源，请更换关键词或地区。
+              </div>
+            )}
           </div>
         </section>
       )}
