@@ -36,6 +36,21 @@ type LiveArticle = {
   sourceCountry?: string;
   summary?: string;
   sourceType?: "rss" | "homepage" | "gdelt";
+  score?: number;
+  matchedTerms?: string[];
+};
+
+type SearchCoverage = {
+  publicIndexCount: number;
+  publicMatchCount: number;
+  externalIndexStatus:
+    | "ok"
+    | "http-error"
+    | "invalid-response"
+    | "timeout"
+    | "network-error";
+  externalMatchCount: number;
+  domains: number;
 };
 
 const SOURCES: Source[] = [
@@ -291,10 +306,14 @@ export default function Home() {
     "idle" | "loading" | "live" | "fallback"
   >("idle");
   const [searchState, setSearchState] = useState<
-    "idle" | "loading" | "live" | "empty" | "error"
+    "idle" | "loading" | "live" | "empty" | "incomplete" | "error"
   >("idle");
   const [searchResults, setSearchResults] = useState<LiveArticle[]>([]);
   const [searchedAs, setSearchedAs] = useState("");
+  const [expandedTerms, setExpandedTerms] = useState<string[]>([]);
+  const [searchCoverage, setSearchCoverage] =
+    useState<SearchCoverage | null>(null);
+  const [searchAttempt, setSearchAttempt] = useState(0);
   const [generatedAt, setGeneratedAt] = useState<string>("");
 
   useEffect(() => {
@@ -351,6 +370,8 @@ export default function Home() {
       setSearchState("idle");
       setSearchResults([]);
       setSearchedAs("");
+      setExpandedTerms([]);
+      setSearchCoverage(null);
       return;
     }
 
@@ -366,14 +387,26 @@ export default function Home() {
         const payload = (await response.json()) as {
           articles?: LiveArticle[];
           searchedAs?: string;
+          expandedTerms?: string[];
+          status?: "live" | "empty" | "incomplete";
+          coverage?: SearchCoverage;
         };
         const articles = payload.articles ?? [];
         setSearchResults(articles);
         setSearchedAs(payload.searchedAs ?? topic);
-        setSearchState(articles.length ? "live" : "empty");
+        setExpandedTerms(payload.expandedTerms ?? [topic]);
+        setSearchCoverage(payload.coverage ?? null);
+        setSearchState(
+          articles.length
+            ? "live"
+            : payload.status === "incomplete"
+              ? "incomplete"
+              : "empty",
+        );
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
         setSearchResults([]);
+        setSearchCoverage(null);
         setSearchState("error");
       }
     }, 700);
@@ -382,7 +415,7 @@ export default function Home() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [date, query]);
+  }, [date, query, searchAttempt]);
 
   const filtered = useMemo(() => {
     return sources.filter((source) => {
@@ -552,16 +585,17 @@ export default function Home() {
                 ? "正在检索 12 家核心媒体…"
                 : searchState === "live"
                   ? `${visibleSearchResults.length} 篇报道 · ${searchedMediaCount} 家媒体`
+                  : searchState === "incomplete"
+                    ? "部分公开索引尚未完成"
                   : "输入停止约 0.7 秒后自动搜索"}
             </span>
           </div>
 
-          {searchedAs &&
-            searchedAs.toLocaleLowerCase() !== query.trim().toLocaleLowerCase() &&
-            searchState !== "loading" && (
+          {expandedTerms.length > 1 && searchState !== "loading" && (
               <div className="query-expansion">
-                <span>中文议题已扩展</span>
-                同时按国际媒体常用词 “{searchedAs}” 检索
+                <span>多语言议题已扩展</span>
+                识别为“{searchedAs}”，并匹配{" "}
+                {expandedTerms.slice(0, 7).join(" / ")}
               </div>
             )}
 
@@ -601,6 +635,11 @@ export default function Home() {
                       {article.summary && (
                         <p className="result-summary">{article.summary}</p>
                       )}
+                      {!!article.matchedTerms?.length && (
+                        <p className="match-reason">
+                          命中实体：{article.matchedTerms.join(" · ")}
+                        </p>
+                      )}
                       <span>
                         收录时间 {shortTime(article.seenAt)} ·{" "}
                         {article.language ?? source?.language ?? "原文"}
@@ -629,17 +668,39 @@ export default function Home() {
             </div>
           )}
 
-          {(searchState === "empty" || searchState === "error") && (
+          {(searchState === "empty" ||
+            searchState === "incomplete" ||
+            searchState === "error") && (
             <div className="search-empty">
               <strong>
                 {searchState === "error"
                   ? "本次公共索引连接失败"
-                  : "当天暂未找到匹配报道"}
+                  : searchState === "incomplete"
+                    ? "部分新闻索引暂未完成"
+                    : "当前日期暂未检索到可核验结果"}
               </strong>
               <p>
-                可以换一个更宽的词，例如“能源”“气候”“贸易”，或选择相邻日期。
+                {searchState === "empty"
+                  ? "这不代表当天一定没有报道。系统已完成当前可用索引检索，可尝试相邻日期或更具体的实体。"
+                  : "系统没有把连接异常当作“没有新闻”。请稍后重试，或先查看当前已同步的媒体版面。"}
               </p>
-              <button onClick={() => setQuery("")}>返回全球版面</button>
+              {searchCoverage && (
+                <p className="search-coverage">
+                  已检查 {searchCoverage.domains} 家核心媒体 · 当日公开索引{" "}
+                  {searchCoverage.publicIndexCount} 篇 · 外部索引
+                  {searchCoverage.externalIndexStatus === "ok"
+                    ? "已完成"
+                    : "未完成"}
+                </p>
+              )}
+              <div className="empty-actions">
+                <button onClick={() => setSearchAttempt((value) => value + 1)}>
+                  重新搜索
+                </button>
+                <button className="secondary" onClick={() => setQuery("")}>
+                  返回全球版面
+                </button>
+              </div>
             </div>
           )}
         </section>
