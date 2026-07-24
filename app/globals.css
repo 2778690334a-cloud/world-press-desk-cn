@@ -838,6 +838,12 @@ input:focus-visible,
   color: white;
 }
 
+.result-actions a.archive-option {
+  border-color: #9a7d35;
+  background: rgba(194, 163, 89, 0.14);
+  color: var(--ink);
+}
+
 .compare-hero {
   display: grid;
   grid-template-columns: 1fr 320px;
@@ -1313,6 +1319,17 @@ input:focus-visible,
   font-weight: 750;
   text-decoration-color: rgba(18, 26, 33, 0.35);
   text-underline-offset: 3px;
+}
+
+.drawer-article-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 15px;
+}
+
+.drawer-article-actions a + a {
+  color: #8b6424;
+  text-decoration-color: rgba(139, 100, 36, 0.45);
 }
 
 .drawer-no-news {
