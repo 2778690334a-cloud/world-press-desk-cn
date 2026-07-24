@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchRssArticles, type IndexedArticle } from "../../lib/rss";
+import {
+  articleMatchesDate,
+  broadUtcRange,
+  currentDeskDate,
+  fetchPublicArticles,
+  type IndexedArticle,
+} from "../../lib/rss";
 
 const SOURCE_DOMAINS = [
   "news.cn",
@@ -52,31 +58,74 @@ const TOPIC_KEYWORDS: Record<string, string[]> = {
     "palestine",
     "lebanon",
     "syria",
+    "中东",
+    "以色列",
+    "加沙",
+    "伊朗",
+    "巴勒斯坦",
+    "黎巴嫩",
+    "叙利亚",
   ],
   "artificial intelligence": [
     "artificial intelligence",
     "openai",
     "machine learning",
     " ai ",
+    "人工智能",
+    "生成式",
+    "大模型",
   ],
   "supply chain": [
     "supply chain",
     "shipping",
     "manufacturing",
     "logistics",
+    "供应链",
+    "物流",
+    "制造业",
   ],
-  ukraine: ["ukraine", "russia", "kyiv", "moscow"],
-  "climate change": ["climate", "global warming", "emissions"],
-  climate: ["climate", "warming", "emissions", "weather"],
-  economy: ["economy", "economic", "inflation", "growth", "interest rate"],
+  ukraine: ["ukraine", "russia", "kyiv", "moscow", "乌克兰", "俄罗斯", "俄乌"],
+  "climate change": [
+    "climate",
+    "global warming",
+    "emissions",
+    "气候",
+    "全球变暖",
+    "排放",
+  ],
+  climate: ["climate", "warming", "emissions", "weather", "气候", "天气"],
+  economy: [
+    "economy",
+    "economic",
+    "inflation",
+    "growth",
+    "interest rate",
+    "经济",
+    "通胀",
+    "增长",
+    "利率",
+  ],
   "global economy": [
     "economy",
     "economic",
     "inflation",
     "growth",
     "interest rate",
+    "全球经济",
+    "通胀",
+    "增长",
   ],
-  energy: ["energy", "oil", "gas", "electricity", "renewable"],
+  energy: [
+    "energy",
+    "oil",
+    "gas",
+    "electricity",
+    "renewable",
+    "能源",
+    "石油",
+    "天然气",
+    "电力",
+  ],
 };
 
 type GdeltArticle = {
@@ -93,6 +142,16 @@ function utcStamp(date: Date) {
     .toISOString()
     .replace(/[-:T.Z]/g, "")
     .slice(0, 14);
+}
+
+function normalizeGdeltDate(value?: string) {
+  if (!value) return undefined;
+  const match = value.match(
+    /^(\d{4})(\d{2})(\d{2})T?(\d{2})(\d{2})(\d{2})Z?$/,
+  );
+  return match
+    ? `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}Z`
+    : value;
 }
 
 function expandTopic(topic: string) {
@@ -112,24 +171,32 @@ function canonicalDomain(value: string) {
   );
 }
 
-function matchesTopic(article: IndexedArticle, searchedAs: string) {
+function matchesTopic(
+  article: IndexedArticle,
+  topic: string,
+  searchedAs: string,
+) {
   const normalizedTopic = searchedAs.toLowerCase();
-  const keywords = TOPIC_KEYWORDS[normalizedTopic] ?? [normalizedTopic];
+  const keywords = [
+    topic.toLowerCase(),
+    ...(TOPIC_KEYWORDS[normalizedTopic] ?? [normalizedTopic]),
+  ].filter(Boolean);
   const haystack = ` ${article.title} ${article.summary ?? ""} `.toLowerCase();
   return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
 }
 
-async function searchDomainGroup(
+async function searchGdelt(
   topic: string,
-  domains: string[],
-  start: Date,
-  end: Date,
-) {
-  const domainBlock = domains.map((domain) => `domain:${domain}`).join(" OR ");
+  requestedDate: string,
+): Promise<IndexedArticle[]> {
+  const { start, end } = broadUtcRange(requestedDate);
+  const domainBlock = SOURCE_DOMAINS.map(
+    (domain) => `domain:${domain}`,
+  ).join(" OR ");
   const params = new URLSearchParams({
     query: `${safeQueryTerm(topic)} (${domainBlock})`,
     mode: "artlist",
-    maxrecords: "60",
+    maxrecords: "250",
     format: "json",
     sort: "datedesc",
     startdatetime: utcStamp(start),
@@ -142,7 +209,7 @@ async function searchDomainGroup(
       {
         headers: {
           Accept: "application/json",
-          "User-Agent": "WorldPressDesk/1.0 (topic search)",
+          "User-Agent": "WorldPressDesk/1.1 (topic search)",
         },
         signal: AbortSignal.timeout(18000),
       },
@@ -151,10 +218,34 @@ async function searchDomainGroup(
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.includes("json")) return [];
     const payload = (await response.json()) as { articles?: GdeltArticle[] };
-    return payload.articles ?? [];
+
+    return (payload.articles ?? [])
+      .filter((article) => article.title && article.url && article.domain)
+      .map((article): IndexedArticle | null => {
+        const domain = canonicalDomain(article.domain!);
+        return domain
+          ? {
+              title: article.title!.trim(),
+              url: article.url!,
+              domain,
+              seenAt: normalizeGdeltDate(article.seendate),
+              language: article.language,
+              sourceCountry: article.sourcecountry,
+              sourceType: "gdelt",
+            }
+          : null;
+      })
+      .filter((article): article is IndexedArticle => article !== null)
+      .filter((article) => articleMatchesDate(article, requestedDate));
   } catch {
     return [];
   }
+}
+
+function requestedDay(value: string | null) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? value
+    : currentDeskDate();
 }
 
 export async function GET(request: NextRequest) {
@@ -166,54 +257,19 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const requestedDate = request.nextUrl.searchParams.get("date");
-  const chosen = requestedDate
-    ? new Date(`${requestedDate}T00:00:00.000Z`)
-    : new Date();
-  const start = Number.isNaN(chosen.getTime()) ? new Date() : chosen;
-  const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + 1);
-  const requestedDay = start.toISOString().slice(0, 10);
+  const date = requestedDay(request.nextUrl.searchParams.get("date"));
   const searchedAs = expandTopic(topic);
-
-  const groups = [
-    SOURCE_DOMAINS.slice(0, 4),
-    SOURCE_DOMAINS.slice(4, 8),
-    SOURCE_DOMAINS.slice(8, 12),
-  ];
-  const [groupResults, rssArticles] = await Promise.all([
-    Promise.all(
-      groups.map((group) => searchDomainGroup(searchedAs, group, start, end)),
-    ),
-    fetchRssArticles(),
+  const [publicArticles, gdeltArticles] = await Promise.all([
+    fetchPublicArticles(),
+    searchGdelt(searchedAs, date),
   ]);
 
-  const rssMatches = rssArticles.filter(
-    (article) =>
-      (!article.seenAt || article.seenAt.slice(0, 10) === requestedDay) &&
-      matchesTopic(article, searchedAs),
-  );
-
-  const gdeltMatches = groupResults
-    .flat()
-    .filter((article) => article.title && article.url && article.domain)
-    .map((article): IndexedArticle | null => {
-      const domain = canonicalDomain(article.domain!);
-      return domain
-        ? {
-            title: article.title!.trim(),
-            url: article.url!,
-            domain,
-            seenAt: article.seendate,
-            language: article.language,
-            sourceCountry: article.sourcecountry,
-          }
-        : null;
-    })
-    .filter((article): article is IndexedArticle => article !== null);
+  const publicMatches = publicArticles
+    .filter((article) => articleMatchesDate(article, date))
+    .filter((article) => matchesTopic(article, topic, searchedAs));
 
   const seen = new Set<string>();
-  const articles = [...rssMatches, ...gdeltMatches]
+  const articles = [...publicMatches, ...gdeltArticles]
     .filter((article) => {
       if (seen.has(article.url)) return false;
       seen.add(article.url);
@@ -222,20 +278,20 @@ export async function GET(request: NextRequest) {
     .sort((left, right) =>
       (right.seenAt ?? "").localeCompare(left.seenAt ?? ""),
     )
-    .slice(0, 60);
+    .slice(0, 80);
 
   return NextResponse.json(
     {
       status: articles.length ? "live" : "empty",
       topic,
       searchedAs,
-      requestedDate: requestedDay,
+      requestedDate: date,
       generatedAt: new Date().toISOString(),
       articles,
     },
     {
       headers: {
-        "Cache-Control": "public, s-maxage=600, stale-while-revalidate=1800",
+        "Cache-Control": "public, s-maxage=300, stale-while-revalidate=900",
       },
     },
   );

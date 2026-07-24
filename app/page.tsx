@@ -23,6 +23,7 @@ type Source = {
   liveUrl?: string;
   seenAt?: string;
   dailyArticles?: LiveArticle[];
+  syncMethod?: "rss" | "homepage" | "gdelt";
 };
 
 type LiveArticle = {
@@ -30,9 +31,11 @@ type LiveArticle = {
   url: string;
   domain: string;
   seenAt?: string;
+  localDate?: string;
   language?: string;
   sourceCountry?: string;
   summary?: string;
+  sourceType?: "rss" | "homepage" | "gdelt";
 };
 
 const SOURCES: Source[] = [
@@ -256,8 +259,27 @@ function shortTime(value?: string) {
   return `${parsed[2]}/${parsed[3]} ${parsed[4]}:${parsed[5]}`;
 }
 
+function deskToday() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const part = (type: string) =>
+    parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function syncMethodLabel(method?: Source["syncMethod"]) {
+  if (method === "rss") return "官方 RSS";
+  if (method === "homepage") return "官网版面";
+  if (method === "gdelt") return "GDELT 补充";
+  return "等待同步";
+}
+
 export default function Home() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = deskToday();
   const [date, setDate] = useState(today);
   const [region, setRegion] = useState("全部");
   const [query, setQuery] = useState("");
@@ -284,7 +306,7 @@ export default function Home() {
     setSyncState("loading");
     try {
       const response = await fetch(
-        `/api/headlines?date=${encodeURIComponent(date)}&t=${Date.now()}`,
+        `/api/headlines?date=${encodeURIComponent(date)}`,
       );
       if (!response.ok) throw new Error("sync failed");
       const payload = (await response.json()) as {
@@ -307,6 +329,7 @@ export default function Home() {
             liveUrl: lead?.url,
             seenAt: lead?.seenAt,
             dailyArticles: matchingArticles,
+            syncMethod: lead?.sourceType,
           };
         }),
       );
@@ -859,7 +882,7 @@ export default function Home() {
                   <i className={`status ${source.archive}`} />
                   {source.archive}
                 </span>
-                <span>{source.liveTitle ? "GDELT 索引" : "主页探测"}</span>
+                <span>{syncMethodLabel(source.syncMethod)}</span>
                 <span>
                   <button onClick={() => setSelectedId(source.id)}>
                     详情
