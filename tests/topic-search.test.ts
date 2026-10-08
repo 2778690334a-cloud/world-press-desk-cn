@@ -90,3 +90,10 @@ test("requires every recognised concept for a compound query", () => {
   assert.ok(related);
   assert.equal(onlyIran, null);
 });
+
+test("does not discard unrecognised topic qualifiers",()=>{
+ const intent=buildTopicIntent("伊朗足球");
+ assert.ok(intent.termGroups.some(group=>group.includes("足球")));
+ assert.equal(matchTopicArticle({title:"Iran transport policy",url:"https://bbc.com/x",domain:"bbc.com"},intent),null);
+ assert.ok(matchTopicArticle({title:"伊朗足球比赛",url:"https://news.cn/x",domain:"news.cn"},intent));
+});

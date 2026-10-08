@@ -5,6 +5,10 @@ export type IndexedArticle = {
   url: string;
   domain: string;
   seenAt?: string;
+  publishedAt?: string;
+  fetchedAt?: string;
+  indexedAt?: string;
+  snapshotDate?: string;
   localDate?: string;
   language?: string;
   sourceCountry?: string;
@@ -202,21 +206,16 @@ export function articleMatchesDate(
   article: IndexedArticle,
   requestedDate: string,
 ) {
-  if (!article.seenAt) return false;
-  const parsed = new Date(article.seenAt);
+  // Saved records belong to their collection day, never a reconstructed date.
+  if (article.snapshotDate) return article.snapshotDate === requestedDate;
+  const value = article.sourceType === "homepage"
+    ? article.fetchedAt ?? article.seenAt
+    : article.publishedAt ?? article.indexedAt ?? article.seenAt;
+  if (!value) return false;
+  const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return false;
-
-  // Homepage results are a live snapshot. Use them only for the current desk day.
-  if (article.sourceType === "homepage") {
-    return requestedDate === currentDeskDate(parsed);
-  }
-
-  const deskDate = dateParts(parsed, "Asia/Shanghai");
-  const sourceDate = dateParts(
-    parsed,
-    SOURCE_TIME_ZONES[article.domain] ?? "UTC",
-  );
-  return requestedDate === deskDate || requestedDate === sourceDate;
+  if (article.sourceType === "homepage" && article.localDate && article.localDate !== requestedDate) return false;
+  return requestedDate === currentDeskDate(parsed);
 }
 
 export function broadUtcRange(requestedDate: string) {
@@ -249,7 +248,7 @@ export function parseFeed(
     ]);
     const summary = stripMarkup(rawSummary);
     const seenAt = normaliseDate(
-      tagValue(block, ["pubDate", "published", "updated", "dc:date"]),
+      tagValue(block, ["pubDate", "published", "dc:date"]),
     );
 
     if (!title || !url) continue;
@@ -258,6 +257,7 @@ export function parseFeed(
       url,
       domain: source.domain,
       seenAt,
+      publishedAt: seenAt,
       language: source.language,
       sourceCountry: source.country,
       summary: summary ? summary.slice(0, 360) : undefined,
@@ -276,10 +276,11 @@ async function fetchFeed(source: RssSource) {
       },
       signal: AbortSignal.timeout(9000),
     });
-    if (!response.ok) return [];
-    return parseFeed(await response.text(), source);
-  } catch {
-    return [];
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return parseFeed(await response.text(), source).map(article => ({ ...article, fetchedAt: new Date().toISOString() }));
+  } catch (error) {
+    console.warn("RSS unavailable", source.domain, error instanceof Error ? error.message : "fetch failed");
+    throw error;
   }
 }
 
@@ -357,6 +358,7 @@ export function parseHomepage(
       url,
       domain: source.domain,
       seenAt: fetchedAt.toISOString(),
+      fetchedAt: fetchedAt.toISOString(),
       localDate: dateFromUrl(url),
       language: source.language,
       sourceCountry: source.country,
@@ -378,22 +380,31 @@ async function fetchHomepage(source: HomepageSource) {
       },
       signal: AbortSignal.timeout(12000),
     });
-    if (!response.ok) return [];
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return parseHomepage(await response.text(), source, fetchedAt);
-  } catch {
-    return [];
+  } catch (error) {
+    console.warn("Homepage unavailable", source.domain, error instanceof Error ? error.message : "fetch failed");
+    throw error;
   }
 }
 
-export async function fetchPublicArticles() {
-  const [feedResults, homepageResults] = await Promise.all([
-    Promise.all(RSS_SOURCES.map(fetchFeed)),
-    Promise.all(HOMEPAGE_SOURCES.map(fetchHomepage)),
-  ]);
-  return [...feedResults.flat(), ...homepageResults.flat()];
+export type SourceResult = { domain: string; status: "ok" | "empty" | "error"; count: number };
+export async function fetchPublicArticlesWithStatus() {
+  const jobs = [...RSS_SOURCES.map(source => ({ domain: source.domain, run: () => fetchFeed(source) })),
+    ...HOMEPAGE_SOURCES.map(source => ({ domain: source.domain, run: () => fetchHomepage(source) }))];
+  const results = await Promise.allSettled(jobs.map(job => job.run()));
+  const articles: IndexedArticle[] = [];
+  const sources: SourceResult[] = results.map((result, index) => {
+    if (result.status === "rejected") return { domain: jobs[index].domain, status: "error", count: 0 };
+    articles.push(...result.value);
+    return { domain: jobs[index].domain, status: result.value.length ? "ok" : "empty", count: result.value.length };
+  });
+  return { articles, sources };
 }
-
+export async function fetchPublicArticles() {
+  return (await fetchPublicArticlesWithStatus()).articles;
+}
 export async function fetchRssArticles() {
-  const results = await Promise.all(RSS_SOURCES.map(fetchFeed));
-  return results.flat();
+  const results = await Promise.allSettled(RSS_SOURCES.map(fetchFeed));
+  return results.flatMap(result => result.status === "fulfilled" ? result.value : []);
 }

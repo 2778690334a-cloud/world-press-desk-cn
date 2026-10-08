@@ -1,13 +1,12 @@
-import { env } from "cloudflare:workers";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./schema";
-
-export function getDb() {
-  if (!env.DB) {
-    throw new Error(
-      "Cloudflare D1 binding `DB` is unavailable. Set the `d1` field in .openai/hosting.json to `DB` or let your control plane inject the real binding values before using the database."
-    );
-  }
-
-  return drizzle(env.DB, { schema });
+import { env } from "cloudflare:workers";
+import type { ArchiveDatabase } from "../app/lib/archive-store";
+export function getArchiveDb(): ArchiveDatabase {
+  const db = (env as {DB?: ArchiveDatabase}).DB;
+  if (!db) throw new Error("Archive database is unavailable");
+  return db;
 }
+
+// Retain the starter helper used by its optional examples.
+export function getDb() { return drizzle(env.DB, {schema}); }

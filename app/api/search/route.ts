@@ -1,3 +1,6 @@
+import { readArchive } from "../../lib/archive-store";
+import { getArchiveDb } from "../../../db";
+import { requestedDay } from "../../lib/headline-index";
 import { NextRequest, NextResponse } from "next/server";
 import {
   articleMatchesDate,
@@ -120,6 +123,8 @@ async function searchGdelt(
                 url: article.url!,
                 domain,
                 seenAt: normalizeGdeltDate(article.seendate),
+                indexedAt: normalizeGdeltDate(article.seendate),
+                fetchedAt: new Date().toISOString(),
                 language: article.language,
                 sourceCountry: article.sourcecountry,
                 sourceType: "gdelt",
@@ -153,12 +158,6 @@ function canonicalArticleUrl(value: string) {
   }
 }
 
-function requestedDay(value: string | null) {
-  return value && /^\d{4}-\d{2}-\d{2}$/.test(value)
-    ? value
-    : currentDeskDate();
-}
-
 export async function GET(request: NextRequest) {
   const topic = request.nextUrl.searchParams.get("q")?.trim() ?? "";
   if (topic.length < 2 || topic.length > 80) {
@@ -168,8 +167,22 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const date = requestedDay(request.nextUrl.searchParams.get("date"));
+  let date: string;
+  try { date = requestedDay(request.nextUrl.searchParams.get("date")); }
+  catch { return NextResponse.json({articles:[],message:"日期无效。"},{status:400}); }
   const intent = buildTopicIntent(topic);
+  if (date !== currentDeskDate()) {
+    try {
+      const archive = await readArchive(getArchiveDb(),date);
+      const articles = archive.articles.flatMap(article => {
+        const match=matchTopicArticle(article,intent); return match ? [{...article,...match}] : [];
+      }).sort((a,b)=>b.score-a.score).slice(0,80);
+      return NextResponse.json({articles,requestedDate:date,status:articles.length?"live":archive.collection?.status === "ok" ? "empty":"incomplete",
+        searchedAs:intent.canonicalQuery,expandedTerms:intent.expandedTerms,generatedAt:archive.generatedAt,
+        coverage:{publicIndexCount:archive.articles.length,publicMatchCount:articles.length,externalIndexStatus:"ok",externalMatchCount:0,domains:12}},
+        {headers:{"Cache-Control":"no-store"}});
+    } catch(error) { console.error("Archive search failed",error); return NextResponse.json({articles:[],status:"error"},{status:503}); }
+  }
   const [publicArticles, gdeltResult] = await Promise.all([
     fetchPublicArticles(),
     searchGdelt(intent, date),

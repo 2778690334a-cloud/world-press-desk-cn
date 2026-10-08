@@ -409,6 +409,13 @@ export function buildTopicIntent(rawQuery: string): TopicIntent {
       )
     : [[original]];
 
+  // Keep unknown qualifiers instead of silently widening “伊朗足球” to “伊朗”.
+  let residual = original;
+  const aliases = concepts.flatMap(concept => concept.aliases).sort((a,b)=>b.length-a.length);
+  for (const alias of aliases) residual = residual.split(alias).join(" ");
+  const qualifiers = concepts.length ? residual.split(/[\s，,、+]+/).filter(term => term && !["与","和","的","及","and"].includes(term.toLowerCase())) : [];
+  for (const qualifier of qualifiers) termGroups.push([qualifier]);
+
   const expandedTerms = uniqueTerms([
     original,
     ...concepts.flatMap((concept) => [
@@ -439,7 +446,7 @@ export function buildTopicIntent(rawQuery: string): TopicIntent {
     conceptIds: concepts.map((concept) => concept.id),
     termGroups,
     expandedTerms,
-    gdeltQuery: gdeltGroups.join(" "),
+    gdeltQuery: [...gdeltGroups, ...qualifiers.map(quoteGdeltTerm)].join(" "),
   };
 }
 

@@ -1,0 +1,41 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getArchiveDb } from "../../../db";
+import { readArchive, saveArchive } from "../../lib/archive-store";
+import { collectHeadlines, requestedDay } from "../../lib/headline-index";
+import { currentDeskDate } from "../../lib/rss";
+export const dynamic = "force-dynamic";
+const headers = {"Cache-Control":"no-store"};
+
+export async function GET(request: NextRequest) {
+  let date: string;
+  try { date = requestedDay(request.nextUrl.searchParams.get("date")); }
+  catch { return NextResponse.json({message:"日期无效。"},{status:400,headers}); }
+  try { return NextResponse.json(await readArchive(getArchiveDb(),date),{headers}); }
+  catch (error) { console.error("Archive read failed",error); return NextResponse.json({status:"error",message:"链接档案暂时无法读取，请稍后重试。",articles:[]},{status:503,headers}); }
+}
+
+// This shared writer relies on the existing OWNER-PRIVATE Sites dispatch boundary.
+// The scheduler uses platform service access, which does not carry visitor identity.
+// Do not make the Site public/shared without adding narrower writer authorization.
+export async function POST(request: NextRequest) {
+  const origin=request.headers.get("origin");
+  if ((origin && origin!==request.nextUrl.origin) || request.headers.get("sec-fetch-site")==="cross-site") return NextResponse.json({message:"Forbidden"},{status:403,headers});
+  if (!request.headers.get("content-type")?.startsWith("application/json")) return NextResponse.json({message:"JSON required"},{status:415,headers});
+  const text=await request.text();
+  if(text.length>1024) return NextResponse.json({message:"Request too large"},{status:413,headers});
+  let date: string;
+  try { const body=JSON.parse(text); date=requestedDay(body.date ?? null); }
+  catch { return NextResponse.json({message:"日期或请求无效。"},{status:400,headers}); }
+  if(date!==currentDeskDate()) return NextResponse.json({message:"只能采集北京时间今天，不能用今天的新闻源补造历史档案。"},{status:400,headers});
+  try {
+    const db=getArchiveDb();
+    const result=await collectHeadlines(date);
+    const unavailable=result.sources.filter(source=>source.status!=="ok").length;
+    const status=result.articles.length ? (unavailable || result.gdeltStatus==="error" ? "partial" : "ok") : "incomplete";
+    const saved=await saveArchive(db,date,result.articles,{sources:result.sources,gdeltStatus:result.gdeltStatus},status);
+    return NextResponse.json({...saved,collectionStatus:status},{headers});
+  } catch(error) {
+    console.error("Archive collection failed",error);
+    return NextResponse.json({status:"error",message:"收录或保存失败，已有档案未删除，请稍后重试。"},{status:503,headers});
+  }
+}

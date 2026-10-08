@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { archiveLookupPath } from "./lib/wayback";
@@ -23,6 +23,10 @@ type Source = {
   liveTitle?: string;
   liveUrl?: string;
   seenAt?: string;
+  publishedAt?: string;
+  fetchedAt?: string;
+  indexedAt?: string;
+  snapshotDate?: string;
   dailyArticles?: LiveArticle[];
   syncMethod?: "rss" | "homepage" | "gdelt";
 };
@@ -32,6 +36,10 @@ type LiveArticle = {
   url: string;
   domain: string;
   seenAt?: string;
+  publishedAt?: string;
+  fetchedAt?: string;
+  indexedAt?: string;
+  snapshotDate?: string;
   localDate?: string;
   language?: string;
   sourceCountry?: string;
@@ -261,6 +269,7 @@ function shortTime(value?: string) {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
+      timeZone: "Asia/Shanghai",
     });
   }
   const parsed = value.match(
@@ -317,18 +326,36 @@ export default function Home() {
     if (stored) setSaved(JSON.parse(stored));
   }, []);
 
-  async function sync() {
+  const syncController = useRef<AbortController | null>(null);
+  const [syncMessage, setSyncMessage] = useState("");
+  const [archiveCount, setArchiveCount] = useState<number | null>(null);
+  async function sync(save = false) {
+    syncController.current?.abort();
+    const controller = new AbortController();
+    syncController.current = controller;
+    setGeneratedAt("");
+    setSyncMessage("");
+    setArchiveCount(null);
+    setSources(SOURCES);
+
     setSyncState("loading");
     try {
       const response = await fetch(
-        `/api/headlines?date=${encodeURIComponent(date)}`,
+        save && date === today ? "/api/daily-archive" : `/api/headlines?date=${encodeURIComponent(date)}`,
+        save && date === today
+          ? {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({date}),signal:controller.signal}
+          : {signal:controller.signal},
       );
       if (!response.ok) throw new Error("sync failed");
       const payload = (await response.json()) as {
         articles?: LiveArticle[];
         generatedAt?: string;
         status?: string;
+        archivedCount?: number;
+        collectionStatus?: string;
+        collection?: {status: string} | null;
       };
+      if (controller.signal.aborted) return;
       const articles = payload.articles ?? [];
       setSources((current) =>
         current.map((source) => {
@@ -348,15 +375,27 @@ export default function Home() {
           };
         }),
       );
-      setGeneratedAt(payload.generatedAt ?? new Date().toISOString());
+      setGeneratedAt(payload.generatedAt ?? "");
+      setArchiveCount(payload.archivedCount ?? null);
+      const partial = payload.collectionStatus === "partial" || payload.collection?.status === "partial";
+      const incomplete = payload.collectionStatus === "incomplete" || payload.collection?.status === "incomplete";
+      setSyncMessage(payload.status === "not-collected" ? "这一天尚未收录，不能用当前新闻补造历史。" :
+        incomplete ? "本次未能获取可用新闻，展示的是此前已保存的记录；请稍后重试。" :
+        partial ? "已保存可获取的链接，部分媒体暂不可用；清单不是全天完整报道。" :
+        !articles.length ? "当前没有可用记录，可能尚未收录或来源暂不可用。" :
+        payload.archivedCount !== undefined ? "已保存链接档案；不保存正文、图片或摘要。" : "当前为实时预览；点击“收录今天”可立即保存链接。");
       setSyncState(articles.length ? "live" : "fallback");
     } catch {
+      if (controller.signal.aborted) return;
+      setSources(SOURCES);
+      setSyncMessage("读取或保存失败，请重试。已有档案不会因此删除。");
       setSyncState("fallback");
     }
   }
 
   useEffect(() => {
     void sync();
+    return () => syncController.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date]);
 
@@ -371,6 +410,11 @@ export default function Home() {
       return;
     }
 
+    setSearchResults([]);
+    setSearchCoverage(null);
+    setExpandedTerms([]);
+    setSearchedAs("");
+    setSearchState("loading");
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setSearchState("loading");
@@ -387,6 +431,7 @@ export default function Home() {
           status?: "live" | "empty" | "incomplete";
           coverage?: SearchCoverage;
         };
+        if (controller.signal.aborted) return;
         const articles = payload.articles ?? [];
         setSearchResults(articles);
         setSearchedAs(payload.searchedAs ?? topic);
@@ -400,6 +445,7 @@ export default function Home() {
               : "empty",
         );
       } catch (error) {
+        if (controller.signal.aborted) return;
         if (error instanceof DOMException && error.name === "AbortError") return;
         setSearchResults([]);
         setSearchCoverage(null);
@@ -479,21 +525,21 @@ export default function Home() {
         </nav>
         <div className="top-actions">
           <label className="date-field">
-            <span>版面日期</span>
+            <span>收录日期（北京）</span>
             <input
               type="date"
               value={date}
               max={today}
-              onChange={(event) => setDate(event.target.value)}
+              onChange={(event) => { if(event.target.value) setDate(event.target.value); }}
             />
           </label>
           <button
             className="sync-button"
-            onClick={() => void sync()}
+            onClick={() => void sync(true)}
             disabled={syncState === "loading"}
           >
             <span className={syncState === "loading" ? "spin" : ""}>↻</span>
-            {syncState === "loading" ? "正在收报" : "同步今日版"}
+            {syncState === "loading" ? "正在读取" : date === today ? "收录今天" : "重读档案"}
           </button>
         </div>
       </header>
@@ -503,7 +549,7 @@ export default function Home() {
           <p className="eyebrow">
             <span className={`live-dot ${syncState}`} />
             {syncState === "live"
-              ? "实时来源已接入"
+              ? archiveCount !== null ? "链接档案已读取" : "实时来源已接入"
               : syncState === "loading"
                 ? "正在连接全球信源"
                 : "全球公开信源 · 每日归档"}
@@ -520,7 +566,7 @@ export default function Home() {
         </div>
         <aside className="desk-note">
           <div className="note-index">NO. {date.replaceAll("-", "")}</div>
-          <h2>今日编辑台</h2>
+          <h2>新闻编辑台</h2>
           <div className="desk-stats">
             <div>
               <strong>{sources.length}</strong>
@@ -532,16 +578,19 @@ export default function Home() {
             </div>
             <div>
               <strong>{sources.filter((item) => item.liveTitle).length}</strong>
-              <span>实时头条</span>
+              <span>有记录的媒体</span>
             </div>
           </div>
           <p>
             {generatedAt
               ? `最近同步：${new Date(generatedAt).toLocaleString("zh-CN", {
                   hour12: false,
+      timeZone: "Asia/Shanghai",
                 })}`
               : "系统将优先读取公开网页、RSS 与 GDELT 索引。"}
           </p>
+          <p role="status">{syncMessage}</p>
+          {archiveCount !== null && <p>已存 {archiveCount} 条链接</p>}
         </aside>
       </section>
 
@@ -637,7 +686,7 @@ export default function Home() {
                         </p>
                       )}
                       <span>
-                        收录时间 {shortTime(article.seenAt)} ·{" "}
+                        {article.publishedAt ? "发布 " : article.sourceType === "gdelt" ? "索引 " : "采集 "}{shortTime(article.seenAt)} ·{" "}
                         {article.language ?? source?.language ?? "原文"}
                       </span>
                     </div>
@@ -770,7 +819,7 @@ export default function Home() {
                     <span>{shortTime(source.seenAt)}</span>
                   </div>
                   <p className="paper-kicker">{source.focus}</p>
-                  <h4>{source.liveTitle ?? "今日真实标题暂未同步"}</h4>
+                  <h4>{source.liveTitle ?? "所选日期暂无已收录标题"}</h4>
                   {source.dailyArticles &&
                   source.dailyArticles.length > 1 ? (
                     <ol className="paper-headline-list">
@@ -782,7 +831,7 @@ export default function Home() {
                     <p className="paper-deck">
                       {source.liveTitle
                         ? (source.dailyArticles?.[0]?.summary ??
-                          "标题来自当天公开新闻索引；点击查看今日完整列表。")
+                          "标题来自公开新闻源；点击查看收录清单，不保证全天完整覆盖。")
                         : "公开索引暂未返回当日标题，点击仍可进入媒体主页和历史存档。"}
                     </p>
                   )}
@@ -825,60 +874,15 @@ export default function Home() {
             <span>
               {query
                 ? `当前搜索：${query} · ${filtered.length} 个相关信源`
-                : "按议题框架对照，而不是简单罗列观点"}
+                : "只展示真实报道，不使用演示统计"}
             </span>
           </div>
           <div className="compare-hero">
             <div>
-              <p className="compare-label">今日高重合议题</p>
-              <h3>全球经济与供应链调整</h3>
-              <p>
-                以下是编辑台根据媒体长期报道重心提供的观察框架。
-                实时标题接入后，可直接从各媒体原文验证。
-              </p>
+              <p className="compare-label">真实标题对照</p>
+              <h3>从已收录的报道开始比较</h3>
+              <p>下方展示所选日期的真实新闻链接。输入议题可跨媒体检索；目前不生成议题热度、自动事件聚类或地区立场分析。</p>
             </div>
-            <div className="signal-bars" aria-label="议题热度 82%">
-              <span style={{ height: "32%" }} />
-              <span style={{ height: "50%" }} />
-              <span style={{ height: "76%" }} />
-              <span style={{ height: "63%" }} />
-              <span style={{ height: "90%" }} />
-              <strong>82%</strong>
-            </div>
-          </div>
-          <div className="lens-grid">
-            {[
-              {
-                number: "01",
-                region: "东亚媒体",
-                title: "产业竞争与供应链安全",
-                text: "更关注制造业、技术能力、出口与企业投资决策。",
-                source: "日本经济新闻 · 新华网 · NHK",
-              },
-              {
-                number: "02",
-                region: "欧美媒体",
-                title: "政策责任与生活成本",
-                text: "将贸易、选举政治、通胀与普通家庭的影响放在一起。",
-                source: "BBC · CNN · Le Monde",
-              },
-              {
-                number: "03",
-                region: "全球南方媒体",
-                title: "发展空间与规则不平等",
-                text: "强调外部冲击、资源议价与新兴市场的发展选择。",
-                source: "Al Jazeera · Folha",
-              },
-            ].map((lens) => (
-              <article className="lens-card" key={lens.number}>
-                <span>{lens.number}</span>
-                <p>{lens.region}</p>
-                <h3>{lens.title}</h3>
-                <div />
-                <p>{lens.text}</p>
-                <small>{lens.source}</small>
-              </article>
-            ))}
           </div>
           <div className="compare-list">
             <h3>打开一组真实版面</h3>
@@ -886,7 +890,7 @@ export default function Home() {
               <button key={source.id} onClick={() => setSelectedId(source.id)}>
                 <span>{source.flag}</span>
                 <strong>{source.masthead}</strong>
-                <em>{source.liveTitle ?? "今日真实标题暂未同步"}</em>
+                <em>{source.liveTitle ?? "所选日期暂无已收录标题"}</em>
                 <b>查看 →</b>
               </button>
             ))}
@@ -1030,7 +1034,7 @@ export default function Home() {
                 : `${date} · 今日版面暂未同步`}
             </h3>
             <p className="drawer-summary">
-              以下均为该媒体当天公开发布的真实标题。点击任一条即可阅读原文；
+              以下为所选日期收录或检索到的标题，不保证都是当天发布。点击即可阅读原文；
               如果原网页失效，也可把 Wayback Machine
               作为历史原文的可选入口。系统不会用生成内容替代新闻，也不会绕过媒体的付费或版权限制。
             </p>
@@ -1041,7 +1045,7 @@ export default function Home() {
                     <span>{String(index + 1).padStart(2, "0")}</span>
                     <div>
                       <small>
-                        {shortTime(article.seenAt)} ·{" "}
+                        {article.publishedAt ? "发布 " : article.sourceType === "gdelt" ? "索引 " : "采集 "}{shortTime(article.seenAt)} ·{" "}
                         {article.language ?? selected.language}
                       </small>
                       <h4>{article.title}</h4>
