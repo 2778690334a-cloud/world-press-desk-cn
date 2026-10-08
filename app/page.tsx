@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
-import { archiveLookupPath } from "./lib/wayback";
+import { archiveLookupPath, archiveTodayLookupUrl } from "./lib/wayback";
 
 type Source = {
   id: string;
@@ -692,7 +692,7 @@ export default function Home() {
                     </div>
                     <div className="result-actions">
                       <a href={article.url} target="_blank" rel="noreferrer">
-                        阅读原文 ↗
+                        原文 ↗
                       </a>
                       <a
                         className="archive-option"
@@ -700,7 +700,10 @@ export default function Home() {
                         target="_blank"
                         rel="noreferrer"
                       >
-                        Wayback 存档 ↗
+                        Wayback ↗
+                      </a>
+                      <a className="archive-option" href={archiveTodayLookupUrl(article.url)} target="_blank" rel="noopener noreferrer" title="查询 archive.today 已有快照，不会自动提交保存">
+                        archive.today ↗
                       </a>
                       {source && (
                         <button onClick={() => setSelectedId(source.id)}>
@@ -1035,8 +1038,7 @@ export default function Home() {
             </h3>
             <p className="drawer-summary">
               以下为所选日期收录或检索到的标题，不保证都是当天发布。点击即可阅读原文；
-              如果原网页失效，也可把 Wayback Machine
-              作为历史原文的可选入口。系统不会用生成内容替代新闻，也不会绕过媒体的付费或版权限制。
+              可以通过 Wayback 或 archive.today 查询已有快照。快照不保证存在或包含完整正文。
             </p>
             {selected.dailyArticles?.length ? (
               <div className="drawer-article-list">
@@ -1052,14 +1054,17 @@ export default function Home() {
                       {article.summary && <p>{article.summary}</p>}
                       <div className="drawer-article-actions">
                         <a href={article.url} target="_blank" rel="noreferrer">
-                          阅读原文与内容 ↗
+                          原文 ↗
                         </a>
                         <a
                           href={archiveLookupPath(article.url, date)}
                           target="_blank"
                           rel="noreferrer"
                         >
-                          Wayback 历史快照 ↗
+                          Wayback ↗
+                        </a>
+                        <a href={archiveTodayLookupUrl(article.url)} target="_blank" rel="noopener noreferrer" title="查询 archive.today 已有快照，不会自动提交保存">
+                          archive.today ↗
                         </a>
                       </div>
                     </div>
@@ -1113,7 +1118,7 @@ export default function Home() {
               <strong>存档提示</strong>
               <p>
                 点击后会先查找所选日期附近最接近的可用快照；若没有精确记录，
-                将进入该网页的 Wayback 存档时间线。存档可用性取决于其抓取记录与媒体规则。
+                将进入该网页的 Wayback 存档时间线。archive.today 查询该原网址的已有快照，不限定所选日期，请核对快照时间。两个入口都不会自动提交保存；可用性取决于已有记录。
               </p>
             </div>
           </aside>

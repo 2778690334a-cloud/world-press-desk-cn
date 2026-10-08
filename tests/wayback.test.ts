@@ -45,3 +45,25 @@ test("allows only validated Wayback snapshot destinations", () => {
   );
 });
 
+
+// Lookup-only archive.today links and Folha wrapper normalization.
+import {archiveTodayLookupUrl, archiveTargetUrl} from "../app/lib/wayback.ts";
+test("archive.today uses the official exact-URL lookup path, never submit",()=>{
+ const target="https://www.bbc.com/news/story?a=1&b=two#section";
+ const link=archiveTodayLookupUrl(target);
+ assert.equal(new URL(link).origin,"https://archive.ph");
+ assert.equal(decodeURIComponent(new URL(link).pathname.slice(1)),target.split("#")[0]);
+ assert.equal(new URL(link).search,"");assert.equal(new URL(link).hash,"");
+ assert.doesNotMatch(link,/\/submit|\/save/);
+ assert.equal(archiveTodayLookupUrl("javascript:alert(1)"),"https://archive.ph/");
+ assert.equal(archiveTodayLookupUrl("https://secret@bbc.com/news"),"https://archive.ph/");
+});
+test("Folha archive lookups use the actual article without altering stored URL",()=>{
+ const target="https://www1.folha.uol.com.br/mundo/2026/10/story.shtml";
+ const wrapper=`https://redir.folha.com.br/redir/online/emcimadahora/rss091/*${target}`;
+ assert.equal(archiveTargetUrl(wrapper),target);
+ assert.equal(new URL(archiveLookupPath(wrapper,"2026-10-08"),"https://local.test").searchParams.get("url"),target);
+ assert.equal(decodeURIComponent(new URL(archiveTodayLookupUrl(wrapper)).pathname.slice(1)),target);
+ const bad="https://redir.folha.com.br/redir/*https://evil.example/story";
+ assert.equal(archiveTargetUrl(bad),bad);assert.equal(archiveTodayLookupUrl(bad),"https://archive.ph/");
+});
