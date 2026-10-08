@@ -2,6 +2,7 @@ const ARCHIVABLE_DOMAINS = [
   "news.cn",
   "xinhuanet.com",
   "nhk.or.jp",
+  "news.web.nhk",
   "nikkei.com",
   "bbc.com",
   "theguardian.com",

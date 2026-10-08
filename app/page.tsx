@@ -88,7 +88,7 @@ const SOURCES: Source[] = [
     region: "亚洲",
     language: "日本語",
     domain: "nhk.or.jp",
-    homepage: "https://www3.nhk.or.jp/news/",
+    homepage: "https://news.web.nhk/",
     access: "免费",
     archive: "可查",
     focus: "公共政策 · 灾害 · 社会",

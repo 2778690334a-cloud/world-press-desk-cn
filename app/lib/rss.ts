@@ -77,7 +77,7 @@ const RSS_SOURCES: RssSource[] = [
     domain: "nhk.or.jp",
     country: "Japan",
     language: "Japanese",
-    url: "https://www3.nhk.or.jp/rss/news/cat0.xml",
+    url: "https://news.web.nhk/n-data/conf/na/rss/cat0.xml",
   },
   {
     domain: "lemonde.fr",

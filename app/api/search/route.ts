@@ -1,3 +1,4 @@
+import { logicalMediaDomain, mediaQueryDomains } from "../../lib/media-domains";
 import { readArchive } from "../../lib/archive-store";
 import { getArchiveDb } from "../../../db";
 import { requestedDay } from "../../lib/headline-index";
@@ -57,7 +58,7 @@ function normalizeGdeltDate(value?: string) {
 }
 
 function canonicalDomain(value: string) {
-  const normalized = value.toLowerCase().replace(/^www\./, "");
+  const normalized = logicalMediaDomain(value);
   return SOURCE_DOMAINS.find(
     (domain) => normalized === domain || normalized.endsWith(`.${domain}`),
   );
@@ -80,7 +81,7 @@ async function searchGdelt(
   requestedDate: string,
 ): Promise<GdeltSearchResult> {
   const { start, end } = broadUtcRange(requestedDate);
-  const domainBlock = SOURCE_DOMAINS.map(
+  const domainBlock = mediaQueryDomains(SOURCE_DOMAINS).map(
     (domain) => `domain:${domain}`,
   ).join(" OR ");
   const params = new URLSearchParams({

@@ -1,3 +1,4 @@
+import { logicalMediaDomain, mediaQueryDomains } from "./media-domains.ts";
 import { articleMatchesDate, broadUtcRange, currentDeskDate, fetchPublicArticlesWithStatus, type IndexedArticle } from "./rss.ts";
 export const ALLOWED_DOMAINS = [
   "news.cn",
@@ -41,7 +42,7 @@ function normalizeGdeltDate(value?: string) {
 }
 
 function canonicalDomain(value: string) {
-  const normalized = value.toLowerCase().replace(/^www\./, "");
+  const normalized = logicalMediaDomain(value);
   return ALLOWED_DOMAINS.find(
     (domain) => normalized === domain || normalized.endsWith(`.${domain}`),
   );
@@ -53,7 +54,7 @@ async function fetchGdeltFallback(
 ) {
   if (!domains.length) return [];
   const { start, end } = broadUtcRange(requestedDate);
-  const domainBlock = domains.map((domain) => `domain:${domain}`).join(" OR ");
+  const domainBlock = mediaQueryDomains(domains).map((domain) => `domain:${domain}`).join(" OR ");
   const params = new URLSearchParams({
     query: `(${domainBlock})`,
     mode: "artlist",

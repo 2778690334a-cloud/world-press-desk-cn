@@ -33,3 +33,7 @@ D1 只保存链接、标题、媒体域名、来源类型及分开的发布时�
 ## 快照入口
 
 新闻详情及搜索结果提供原文、Wayback 和 archive.today 三个入口。archive.today 使用 archive.ph 官方已有快照查询路径，不自动提交保存，不保证完整正文或存在快照；查询不限定所选日期。Folha 存档查询仅解开已知 RSS 重定向包装，核验目标域名后查询真实文章 URL，数据库中的原始 URL 不变。
+
+## NHK 地址迁移
+
+RSS 使用 https://news.web.nhk/n-data/conf/na/rss/cat0.xml，主页为 https://news.web.nhk/ 。保持逻辑媒体标识 nhk.or.jp，防止旧档案和筛选失联；GDELT 查询同时包含新旧域并映射回这一标识，存档入口允许新域。新RSS地址来自迁移说明的第三方摘录及RSS示例；开发环境自动访问受robots限制，切换时未验证当前源返回的日期或条数。不要将一次源响应为空解读为NHK没有新闻。
