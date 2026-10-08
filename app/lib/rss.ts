@@ -1,3 +1,4 @@
+import { decodeFeedBytes } from "./feed-encoding.ts";
 export type ArticleSource = "rss" | "homepage" | "gdelt";
 
 export type IndexedArticle = {
@@ -277,7 +278,7 @@ async function fetchFeed(source: RssSource) {
       signal: AbortSignal.timeout(9000),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return parseFeed(await response.text(), source).map(article => ({ ...article, fetchedAt: new Date().toISOString() }));
+    return parseFeed(decodeFeedBytes(await response.arrayBuffer(), response.headers.get("content-type") ?? ""), source).map(article => ({ ...article, fetchedAt: new Date().toISOString() }));
   } catch (error) {
     console.warn("RSS unavailable", source.domain, error instanceof Error ? error.message : "fetch failed");
     throw error;
