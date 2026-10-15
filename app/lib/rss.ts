@@ -1,3 +1,4 @@
+import { cachedPublicSource } from "./public-cache.ts";
 import { decodeFeedBytes } from "./feed-encoding.ts";
 export type ArticleSource = "rss" | "homepage" | "gdelt";
 
@@ -390,7 +391,7 @@ async function fetchHomepage(source: HomepageSource) {
 }
 
 export type SourceResult = { domain: string; status: "ok" | "empty" | "error"; count: number };
-export async function fetchPublicArticlesWithStatus() {
+async function fetchPublicArticlesWithStatusUncached() {
   const jobs = [...RSS_SOURCES.map(source => ({ domain: source.domain, run: () => fetchFeed(source) })),
     ...HOMEPAGE_SOURCES.map(source => ({ domain: source.domain, run: () => fetchHomepage(source) }))];
   const results = await Promise.allSettled(jobs.map(job => job.run()));
@@ -408,4 +409,8 @@ export async function fetchPublicArticles() {
 export async function fetchRssArticles() {
   const results = await Promise.allSettled(RSS_SOURCES.map(fetchFeed));
   return results.flatMap(result => result.status === "fulfilled" ? result.value : []);
+}
+
+export async function fetchPublicArticlesWithStatus() {
+  return cachedPublicSource("feeds:"+currentDeskDate(), fetchPublicArticlesWithStatusUncached);
 }

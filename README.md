@@ -37,3 +37,25 @@ D1 只保存链接、标题、媒体域名、来源类型及分开的发布时�
 ## NHK 地址迁移
 
 RSS 使用 https://news.web.nhk/n-data/conf/na/rss/cat0.xml，主页为 https://news.web.nhk/ 。保持逻辑媒体标识 nhk.or.jp，防止旧档案和筛选失联；GDELT 查询同时包含新旧域并映射回这一标识，存档入口允许新域。新RSS地址来自迁移说明的第三方摘录及RSS示例；开发环境自动访问受robots限制，切换时未验证当前源返回的日期或条数。不要将一次源响应为空解读为NHK没有新闻。
+
+## Public reader / administrator boundary
+
+Public reading does not require registration. The Android reader must never contain
+Sites bypass tokens or administrator credentials. All archive writes now require
+an exact platform-verified per-Site user ID configured as `DESK_OWNER_SITE_ID`.
+Unset configuration denies every write. Never use a ChatGPT account/workspace ID
+as a substitute for the per-Site ID, and never grant the first visitor admin.
+
+The `/mcp` endpoint provides `desk_identity`, `collect_daily_news`, and
+`read_daily_archive`. Connect the owner through the platform-managed Site plugin,
+verify their identity while the Site remains private, then configure the exact ID
+using Sites runtime environment tools and deploy that revision. Verify collection
+and independent readback through the connected tools before enabling public access.
+The old owner-private bypass-header automation no longer authorizes writes and
+must be migrated to the connected Site tools; never accept the mere presence of
+`OAI-Sites-Authorization` as application authorization.
+
+Public source refreshes share a bounded, two-minute in-memory cache with
+single-flight requests and a 24 cache-miss/minute budget per Worker isolate.
+This reduces source fan-out; it is not a global rate limit or a DDoS guarantee.
+Saved link records remain unchanged; no article body/image/summary is persisted.

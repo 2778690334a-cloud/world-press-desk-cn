@@ -1,3 +1,4 @@
+import { cachedPublicSource } from "../../lib/public-cache";
 import { logicalMediaDomain, mediaQueryDomains } from "../../lib/media-domains";
 import { readArchive } from "../../lib/archive-store";
 import { getArchiveDb } from "../../../db";
@@ -185,8 +186,8 @@ export async function GET(request: NextRequest) {
     } catch(error) { console.error("Archive search failed",error); return NextResponse.json({articles:[],status:"error"},{status:503}); }
   }
   const [publicArticles, gdeltResult] = await Promise.all([
-    fetchPublicArticles(),
-    searchGdelt(intent, date),
+    fetchPublicArticles().catch(()=>[]),
+    cachedPublicSource("search:"+date+":"+intent.gdeltQuery,()=>searchGdelt(intent, date)).catch(()=>({articles:[],status:"network-error" as const})),
   ]);
 
   const publicArticlesForDate = publicArticles.filter((article) =>

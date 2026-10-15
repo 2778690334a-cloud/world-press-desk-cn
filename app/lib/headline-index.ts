@@ -1,3 +1,4 @@
+import { cachedPublicSource } from "./public-cache.ts";
 import { logicalMediaDomain, mediaQueryDomains } from "./media-domains.ts";
 import { articleMatchesDate, broadUtcRange, currentDeskDate, fetchPublicArticlesWithStatus, type IndexedArticle } from "./rss.ts";
 export const ALLOWED_DOMAINS = [
@@ -138,7 +139,7 @@ export function deduplicateAndLimit(
 }
 
 
-export async function collectHeadlines(date: string) {
+async function collectHeadlinesUncached(date: string) {
   const result = await fetchPublicArticlesWithStatus();
   const direct = result.articles.filter(article => articleMatchesDate(article, date));
   const present = new Set(direct.map(article => article.domain));
@@ -151,4 +152,8 @@ export async function collectHeadlines(date: string) {
   }
   const articles = deduplicateAndLimit([...direct, ...fallback], date);
   return { articles, sources: result.sources, gdeltStatus };
+}
+
+export async function collectHeadlines(date: string) {
+  return cachedPublicSource("headlines:"+date,()=>collectHeadlinesUncached(date));
 }

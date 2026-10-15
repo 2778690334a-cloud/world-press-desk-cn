@@ -300,6 +300,10 @@ function syncMethodLabel(method?: Source["syncMethod"]) {
 
 export default function Home() {
   const today = deskToday();
+  const [canCollect, setCanCollect] = useState(false);
+  useEffect(() => {
+    fetch("/api/session", {cache:"no-store"}).then(r => r.ok ? r.json() as Promise<{canCollect?: boolean}> : null).then(v => setCanCollect(v?.canCollect === true)).catch(() => {});
+  }, []);
   const [date, setDate] = useState(today);
   const [region, setRegion] = useState("全部");
   const [query, setQuery] = useState("");
@@ -341,8 +345,8 @@ export default function Home() {
     setSyncState("loading");
     try {
       const response = await fetch(
-        save && date === today ? "/api/daily-archive" : `/api/headlines?date=${encodeURIComponent(date)}`,
-        save && date === today
+        save && canCollect && date === today ? "/api/daily-archive" : `/api/headlines?date=${encodeURIComponent(date)}`,
+        save && canCollect && date === today
           ? {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({date}),signal:controller.signal}
           : {signal:controller.signal},
       );
@@ -383,7 +387,7 @@ export default function Home() {
         incomplete ? "本次未能获取可用新闻，展示的是此前已保存的记录；请稍后重试。" :
         partial ? "已保存可获取的链接，部分媒体暂不可用；清单不是全天完整报道。" :
         !articles.length ? "当前没有可用记录，可能尚未收录或来源暂不可用。" :
-        payload.archivedCount !== undefined ? "已保存链接档案；不保存正文、图片或摘要。" : "当前为实时预览；点击“收录今天”可立即保存链接。");
+        payload.archivedCount !== undefined ? "已保存链接档案；不保存正文、图片或摘要。" : canCollect ? "当前为实时预览；点击“收录今天”可立即保存链接。" : "当前为实时预览；链接档案由管理员定时收录。");
       setSyncState(articles.length ? "live" : "fallback");
     } catch {
       if (controller.signal.aborted) return;
@@ -539,11 +543,12 @@ export default function Home() {
             disabled={syncState === "loading"}
           >
             <span className={syncState === "loading" ? "spin" : ""}>↻</span>
-            {syncState === "loading" ? "正在读取" : date === today ? "收录今天" : "重读档案"}
+            {syncState === "loading" ? "正在读取" : date === today ? canCollect ? "收录今天" : "刷新新闻" : "重读档案"}
           </button>
         </div>
       </header>
 
+      <div style={{textAlign:"right",padding:"0 20px",fontSize:12}}><a href="/signin-with-chatgpt?return_to=%2F" target="_top">管理员登录</a> · 公众阅读无需登录</div>
       <section className="hero">
         <div className="hero-copy">
           <p className="eyebrow">
