@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Skeleton from "react-loading-skeleton";
 import "react-loading-skeleton/dist/skeleton.css";
 import { archiveLookupPath, archiveTodayLookupUrl } from "./lib/wayback";
+import HotspotsPanel from "./components/HotspotsPanel";
 
 type Source = {
   id: string;
@@ -307,9 +308,30 @@ export default function Home() {
   const [date, setDate] = useState(today);
   const [region, setRegion] = useState("全部");
   const [query, setQuery] = useState("");
-  const [view, setView] = useState<"desk" | "compare" | "ledger">("desk");
+  const [view, setView] = useState<"desk" | "compare" | "ledger" | "hotspots">("desk");
+  const [hotspotsRevision, setHotspotsRevision] = useState(0);
+  const [detailView, setDetailView] = useState<"articles" | "hotspots">("articles");
+  const drawerRef = useRef<HTMLElement>(null);
   const [sources, setSources] = useState(SOURCES);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  useEffect(() => {
+    setDetailView("articles");
+    if (!selectedId) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    drawerRef.current?.querySelector<HTMLButtonElement>(".drawer-close")?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedId(null);
+      if (event.key !== "Tab") return;
+      const elements = Array.from(drawerRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input, summary, [tabindex="0"]') ?? []).filter(element => element.getClientRects().length);
+      const first = elements[0], last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => { document.body.style.overflow = previousOverflow; document.removeEventListener("keydown", onKeyDown); previous?.focus(); };
+  }, [selectedId]);
   const [saved, setSaved] = useState<string[]>([]);
   const [syncState, setSyncState] = useState<
     "idle" | "loading" | "live" | "fallback"
@@ -514,6 +536,9 @@ export default function Home() {
           >
             今日版面
           </button>
+          <button className={view === "hotspots" ? "active" : ""} onClick={() => { setQuery(""); setView("hotspots"); }}>
+            世界热点
+          </button>
           <button
             className={view === "compare" ? "active" : ""}
             onClick={() => setView("compare")}
@@ -539,7 +564,7 @@ export default function Home() {
           </label>
           <button
             className="sync-button"
-            onClick={() => void sync(true)}
+            onClick={() => { void sync(true).then(() => setHotspotsRevision(value => value + 1)); }}
             disabled={syncState === "loading"}
           >
             <span className={syncState === "loading" ? "spin" : ""}>↻</span>
@@ -549,7 +574,7 @@ export default function Home() {
       </header>
 
       <div style={{textAlign:"right",padding:"0 20px",fontSize:12}}><a href="/signin-with-chatgpt?return_to=%2F" target="_top">管理员登录</a> · 公众阅读无需登录</div>
-      <section className="hero">
+      {view !== "hotspots" && <><section className="hero">
         <div className="hero-copy">
           <p className="eyebrow">
             <span className={`live-dot ${syncState}`} />
@@ -568,6 +593,7 @@ export default function Home() {
             汇集各国权威媒体的首页与头条线索，保留原文和网页存档入口，
             让你在十分钟内看见不同社会真正关心的事情。
           </p>
+          <button className="hotspots-discover" onClick={() => { setQuery(""); setView("hotspots"); }}>探索今日世界热点 <span>↗</span></button>
         </div>
         <aside className="desk-note">
           <div className="note-index">NO. {date.replaceAll("-", "")}</div>
@@ -622,6 +648,9 @@ export default function Home() {
           />
         </label>
       </section>
+
+      </>}
+      {view === "hotspots" && <HotspotsPanel key={date} date={date} today={today} sources={SOURCES} refreshKey={hotspotsRevision} onOpenSource={setSelectedId} />}
 
       {query.trim() && (
         <section className="topic-search-view" aria-live="polite">
@@ -1015,6 +1044,7 @@ export default function Home() {
           onClick={() => setSelectedId(null)}
         >
           <aside
+            ref={drawerRef}
             className="source-drawer"
             role="dialog"
             aria-modal="true"
@@ -1036,6 +1066,11 @@ export default function Home() {
               <p>{selected.localName}</p>
             </div>
             <p className="drawer-focus">{selected.focus}</p>
+            <div className="drawer-view-tabs" aria-label="媒体详情视图">
+              <button className={detailView === "articles" ? "active" : ""} aria-pressed={detailView === "articles"} onClick={() => setDetailView("articles")}>当日新闻</button>
+              <button className={detailView === "hotspots" ? "active" : ""} aria-pressed={detailView === "hotspots"} onClick={() => setDetailView("hotspots")}>近七天热点 ↗</button>
+            </div>
+            {detailView === "hotspots" ? <HotspotsPanel key={`${selected.id}-${date}`} date={date} today={today} source={selected} sources={SOURCES} refreshKey={hotspotsRevision} /> : <>
             <h3>
               {selected.dailyArticles?.length
                 ? `${date} · 今日收录 ${selected.dailyArticles.length} 条`
@@ -1126,6 +1161,7 @@ export default function Home() {
                 将进入该网页的 Wayback 存档时间线。archive.today 查询该原网址的已有快照，不限定所选日期，请核对快照时间。两个入口都不会自动提交保存；可用性取决于已有记录。
               </p>
             </div>
+            </>}
           </aside>
         </div>
       )}

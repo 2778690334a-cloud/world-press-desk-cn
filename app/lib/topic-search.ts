@@ -378,6 +378,13 @@ function containsTerm(text: string, term: string) {
   ).test(source);
 }
 
+// Hotspots classify actual titles only; source focus labels and summaries are not evidence.
+export function matchTitleTopics(title: string): { id: string; label: string }[] {
+  return TOPIC_CONCEPTS.filter(concept =>
+    [...concept.aliases, ...(concept.related ?? [])].some(term => containsTerm(title, term)),
+  ).map(({ id, label }) => ({ id, label }));
+}
+
 function uniqueTerms(values: string[]) {
   const seen = new Set<string>();
   return values.filter((value) => {

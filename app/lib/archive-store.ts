@@ -1,4 +1,5 @@
 import { currentDeskDate, type IndexedArticle } from "./rss.ts";
+import { mediaQueryDomains } from "./media-domains.ts";
 
 // A narrow prepared-statement interface also allows real SQLite regression tests.
 export interface ArchiveStatement {
@@ -67,5 +68,21 @@ export async function readArchive(db: ArchiveDatabase, date: string) {
     collection: run ? {...run, sources: JSON.parse(run.sourcesJson), sourcesJson: undefined} : null,
     generatedAt: run?.attemptedAt ?? null,
     status: data.results.length ? "archived" : run ? run.status : "not-collected",
+  };
+}
+
+// Filter the date range and target media in SQLite, rather than reading the full archive.
+export async function readMediaArchiveRange(db: ArchiveDatabase, domain: string, startDate: string, endDate: string) {
+  const domains = mediaQueryDomains([domain]);
+  const predicate = domains.map(() => "(domain = ? OR domain LIKE ?)").join(" OR ");
+  const values = domains.flatMap(value => [value, `%.${value}`]);
+  const data = await db.prepare(`SELECT snapshot_date AS snapshotDate,url,title,domain,published_at AS publishedAt,
+    fetched_at AS fetchedAt,indexed_at AS indexedAt,source_type AS sourceType
+    FROM news_links WHERE snapshot_date >= ? AND snapshot_date <= ? AND (${predicate})
+    ORDER BY snapshot_date DESC,domain,published_at DESC,url`).bind(startDate, endDate, ...values).all<IndexedArticle>();
+  return {
+    articles: data.results.map(article => ({ ...article, seenAt: article.publishedAt ?? article.indexedAt ?? article.fetchedAt })),
+    generatedAt: data.results.reduce<string | null>((latest, article) =>
+      article.fetchedAt && (!latest || article.fetchedAt > latest) ? article.fetchedAt : latest, null),
   };
 }
